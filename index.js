@@ -33,13 +33,20 @@ async function initializeDatabase() {
         id SERIAL PRIMARY KEY,
         path VARCHAR(255) NOT NULL,
         timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        ip VARCHAR(45),
+        ip VARCHAR(100),
         user_agent TEXT,
         referer TEXT,
         country VARCHAR(100),
         city VARCHAR(100)
       );
     `);
+    
+    // Изменяем размер поля ip в существующей таблице
+    await client.query(`
+      ALTER TABLE errors 
+      ALTER COLUMN ip TYPE VARCHAR(100);
+    `);
+    
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Error initializing database:', error);
@@ -62,8 +69,19 @@ app.use((req, res, next) => {
 app.post('/api/track-error', async (req, res) => {
   const { path, userAgent, referer } = req.body;
   
-  // Получаем IP из заголовков
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  // Получаем IP из заголовков, берем только первый IP если их несколько
+  let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const originalIp = ip; // Сохраняем оригинальный IP для логирования
+  
+  if (ip && ip.includes(',')) {
+    ip = ip.split(',')[0].trim();
+  }
+  
+  // Ограничиваем длину IP до 100 символов
+  if (ip && ip.length > 100) {
+    console.log(`IP слишком длинный (${ip.length}): ${ip.substring(0, 20)}...`);
+    ip = ip.substring(0, 100);
+  }
   
   try {
     const client = await pool.connect();
@@ -79,6 +97,8 @@ app.post('/api/track-error', async (req, res) => {
     }
   } catch (error) {
     console.error('Error saving visitor data:', error);
+    console.error(`Original IP: ${originalIp}`);
+    console.error(`Processed IP: ${ip}`);
     res.status(500).json({ error: 'Failed to save data' });
   }
 });
